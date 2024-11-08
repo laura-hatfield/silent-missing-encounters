@@ -1,0 +1,94 @@
+options mprint;
+
+libname library '/home/taf';
+
+
+proc format library=library;
+
+
+******************************************************;
+*THIS STEP CONSOLIDATES CONSECUTIVE ED STAYS INTO ONE*;
+******************************************************;
+
+
+
+data all;
+ set dat.ed_vis2;
+ where bene_id ~= "";
+
+ run;
+
+
+data all;
+ set all;
+
+proc sort;
+ by bene_id srvc_bgn_dt srvc_end_dt;
+
+data all;
+ set all;
+ by bene_id;
+ retain cont_st cont_end count;
+ 
+if first.bene_id then do;
+ cont_st = srvc_bgn_dt;
+ cont_end = srvc_end_dt;
+ count = 1;
+ end;
+
+
+ else if srvc_bgn_dt <= cont_end + 1 then do;
+ cont_end = srvc_end_dt;
+ end;
+
+ else do;
+ count + 1;
+  cont_st = srvc_bgn_dt;
+ cont_end = srvc_end_dt;
+ end;
+ format srvc_bgn_dt srvc_end_dt cont_st cont_end mmddyy8.;
+
+ proc sort; by bene_id count; 
+
+
+
+ proc sql;
+ create table mx as select bene_id, count, max(vis) as max_vis, max(em) as max_em,  max(cont_st) as max_cont_st,
+ max(cont_end) as max_cont_end from all
+ group by bene_id, count
+ order by bene_id, count; 
+
+data all;
+ merge all mx;
+ by bene_id count;
+ drop line_prcdr_cd_dt line_srvc_end_dt dgns_cd1 srvc_bgn_dt srvc_end_dt em
+ tot_months cont_st cont_end mc_plan_id vis dgns_cd_1;
+ format max_cont_st max_cont_end mmddyy8.;
+ dum = compress(bene_id||"_"||count);
+ run;
+
+proc sort;
+ by dum;
+
+data all;
+ set all;
+ by dum;
+ if first.dum = 1;
+ drop dum;
+ rename 
+ max_vis = vis
+ max_em = em
+ max_cont_st = start
+ max_cont_end = end;
+
+proc print data=all (obs=200);
+ run;
+
+data dat.ed_vis2;
+ set all;
+ if vis = . then vis = 0;
+ if em = . then em = 0;
+ if em = 1 then other = 0; else other = 1;
+
+proc contents;
+ run;

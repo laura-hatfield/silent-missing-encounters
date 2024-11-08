@@ -1,0 +1,17 @@
+options ps = 60 ls = 80;
+
+libname dat '/DATA';
+
+*************************************************************;
+*IMPORT FILE WITH PLAN LEVEL COMPOSITE SCORE CREATED BY ALINA;
+*************************************************************;
+
+proc import out=comp datafile='/home/composite_8_8.xlsx'
+ dbms=xlsx replace;
+ getnames=yes;
+
+data dat.comp;
+ set comp;
+ if state_cd = "" then delete;
+proc print;
+ run;

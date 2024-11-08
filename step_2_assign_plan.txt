@@ -1,0 +1,145 @@
+libname dat '/DATA';
+libname taf '/taf';
+options mprint;
+
+libname library 'home/taf';
+
+
+proc format library=library;
+
+***************************************************************************;
+*THIS PROGRAM ASSIGNS A PLAN TO EACH BENEFICIARY USING THE ELIGIBILITY FILE;
+***************************************************************************;
+
+data months;
+ set taf.taf_demog_elig_mngd_care_2018;
+where bene_Id ~= "";
+run;
+
+
+*********************************************************************;
+*EACH BENE HAS UP TO 16 CONTRACTS FOR EACH MONTH. WE ARE ONLY        ;
+*TAKING MCOs (01) AND HIOs (04).  THIS STEP CAPTURES EACH INSTANCE   ;
+*OF THOSE AND STACKS THEN INTO ONE DATAFILE WHERE EACH ROW REPRESENTS;
+*ONE MONTH OF ENROLLMENT FOR A GIVEN BENE.  "LEVEL" IS ALSO CAPTURED ;
+*WHICH WE WILL USE TO HELP ASSIGN PLANS.                             ;
+*********************************************************************;
+
+data all (keep=bene_id plan state_cd level month);
+ set months;
+
+
+%macro y(n);
+array pln&n.(12) mc_plan_id_&n._01 mc_plan_id_&n._02 mc_plan_id_&n._03 mc_plan_id_&n._04
+mc_plan_id_&n._05 mc_plan_id_&n._06 mc_plan_id_&n._07 mc_plan_id_&n._08
+mc_plan_id_&n._09 mc_plan_id_&n._10 mc_plan_id_&n._11 mc_plan_id_&n._12  ;
+
+array ptp&n. (12) mc_plan_type_cd_&n._01 mc_plan_type_cd_&n._02 mc_plan_type_cd_&n._03 mc_plan_type_cd_&n._04
+mc_plan_type_cd_&n._05 mc_plan_type_cd_&n._06 mc_plan_type_cd_&n._07 mc_plan_type_cd_&n._08
+mc_plan_type_cd_&n._09 mc_plan_type_cd_&n._10 mc_plan_type_cd_&n._11 mc_plan_type_cd_&n._12  ;
+
+
+
+do i = 1 to 12;
+if ptp&n.(i) in ("01", "04") and pln&n.(i) ~= "" then do;
+ plan = pln&n.(i);
+ level = "&n.";
+ month = i;
+ output;
+end;
+end;
+
+%mend y;
+
+%y(01)
+%y(02) %y(03) %y(04) %y(05) %y(06)
+%y(07) %y(08) %y(09) %y(10) %y(11)
+%y(12) %y(13) %y(14) %y(15) %y(16)
+
+data all;
+ set all;
+ if month = 1 then month1 = 1; else month1 = 0;
+ if month = 2 then month2 = 1; else month2 = 0;
+ if month = 3 then month3 = 1; else month3 = 0;
+ if month = 4 then month4 = 1; else month4 = 0;
+ if month = 5 then month5 = 1; else month5 = 0;
+ if month = 6 then month6 = 1; else month6 = 0;
+ if month = 7 then month7 = 1; else month7 = 0;
+ if month = 8 then month8 = 1; else month8 = 0;
+ if month = 9 then month9 = 1; else month9 = 0;
+ if month = 10 then month10 = 1; else month10 = 0;
+ if month = 11 then month11 = 1; else month11 = 0;
+ if month = 12 then month12 = 1; else month12 = 0;
+
+
+**********************************************************************;
+*FOR EACH BENE, WE COUNT THE NUMBER OF MONTHS FOR EACH PLAN/STATE, AND;
+*THE THE NUMBER OF MONTHS ACROSS ALL PLANS.                           ;
+**********************************************************************;
+
+
+proc sql;
+ create table months as select plan, state_cd, level, bene_id,
+ max(month1) as month1, max(month2) as month2, max(month3) as month3, max(month4) as month4,
+ max(month5) as month5, max(month6) as month6, max(month7) as month7, max(month8) as month8,
+ max(month9) as month9, max(month10) as month10, max(month11) as month11, max(month12) as month12 from all
+ group by plan, state_cd, level, bene_id
+ order by bene_id;
+
+data months;
+ set months;
+ plan_months = month1 + month2 + month3 + month4 + month5 + month6 +
+ month7 + month8 + month9 + month10 + month11 + month12;
+
+
+proc sql;
+ create table tot as select bene_id,
+ max(month1) as month1, max(month2) as month2, max(month3) as month3, max(month4) as month4,
+ max(month5) as month5, max(month6) as month6, max(month7) as month7, max(month8) as month8,
+ max(month9) as month9, max(month10) as month10, max(month11) as month11, max(month12) as month12 from all
+ group by bene_id
+ order by bene_id;
+
+
+
+data tot (keep=bene_id tot_months);
+ set tot;
+ tot_months = month1 + month2 + month3 + month4 + month5 + month6 +
+ month7 + month8 + month9 + month10 + month11 + month12;
+
+proc sort;
+ by bene_id;
+
+**************************************************************************************;
+*TAKE THE PLAN WITH THE MOST MONTHS OF ENROLLMENT (MIN. 6 MONTHS).  IF THERE IS A TIE,;
+*TAKE THE PLAN WITH THE HIGHER 'LEVEL'.                                               ;
+*WE ALSO REQUIRE 12 MONTHS TOTAL ENROLLMENT (IN ANY PLAN).                            ;
+**************************************************************************************;
+
+data months;
+ merge months tot;
+ by bene_id;
+ if first.bene_id = 1;
+ drop level srt;
+ run;
+
+
+proc print data=months (obs=20);
+ run;
+
+
+data dat.assigned_plan;
+ set months;
+ where plan_months >= 6 and tot_months = 12;
+ drop month1 month2 month3 month4 month5 month6
+ month7 month8 month9 month10 month11 month12;
+ run;
+
+proc freq;
+ tables plan_months * tot_months;
+
+
+
+
+
+

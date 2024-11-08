@@ -1,0 +1,294 @@
+fix_plan_names.log                        step_2_assign_plan.sas
+fix_plan_names.lst                        step_3_ed_analysis.log
+fix_plan_names.sas                        step_3_ed_analysis.lst
+import.log                                step_3_ed_analysis.sas
+import.lst                                step_4_import_comp.log
+import_plan_names.log                     step_4_import_comp.lst
+import_plan_names.lst                     step_4_import_comp.sas
+import_plan_names.sas                     step_5_collpase_ed_vis.log
+import.sas                                step_5_collpase_ed_vis.lst
+inpatient_plan_fixed_names.log            step_5_collpase_ed_vis.sas
+inpatient_plan_fixed_names.lst            step_6_final_dataset.log
+inpatient_plan_fixed_names.sas            step_6_final_dataset.lst
+
+libname dat '/DATA';
+libname taf '/taf';
+options mprint;
+
+libname library '/home/taf';
+
+proc format library=library;
+
+************************************************;
+***BENE LEVEL FILE WITH DEMOGRAPHIC VARIABLES***;
+************************************************;
+
+data dsbl;
+ set taf.taf_demog_elig_base_2018 (keep=bene_id sex_cd age DSBLTY_BLND_IND  DSBLTY_DEAF_IND  DSBLTY_DFCLTY_CNCNTRTNG_IND 
+DSBLTY_DFCLTY_DRSNG_BATHNG_IND DSBLTY_DFCLTY_ERNDS_IND  DSBLTY_DFCLTY_WLKG_IND DSBLTY_OTHR_IND);
+ run;
+
+proc sql;
+ create table dsbl as select distinct * from dsbl
+ order by bene_id;;
+
+data dsbl;
+ set dsbl; 
+ by bene_id;
+ if first.bene_id = 1;
+
+proc sort;
+ by bene_id;
+
+
+******************************;
+***FILE WITH EDITED PLAN NAMES;
+******************************;
+
+proc import out=fix datafile = "/chda/project/uhsp_am_telemed/jeff/fixed_plan_names.xlsx" dbms=xlsx replace;
+ getnames = yes;
+run;
+
+
+data fix;
+ set fix (drop=e);
+proc sort;
+ by mc_plan_name;
+
+
+**************************************************;
+***BENE LEVEL FILE WITH EACH BENE'S ASSINGNED PLAN;
+***THIS IS THE DENOMINATOR.                       ;
+**************************************************;
+
+
+data bens;
+ set dat.assigned_plan;
+proc sort;
+ by bene_id;
+
+
+*****************************************************************************************;
+***FILE OF ED VISIT.  HERE IS WHERE WE AGGREGATE TO ONE ROW PER BENE WITH VISIT COUNTS***;
+*****************************************************************************************;
+
+
+data all;
+ set dat.ed_vis2;
+ run;
+
+proc sort;
+ by bene_id;
+
+proc sql;
+ create table all as select bene_id, sum(em) as em, sum(vis) as vis, sum(other) as other from all
+ group by bene_id;
+
+
+
+*************************************;
+***STATE LEVEL REIMBURSEMENT VARIABLE;
+*************************************;
+
+data pln (keep=mc_plan_id mc_plan_name state_cd rmbrsmnt rename = (mc_plan_id=plan));
+ set taf.taf_apl_base_2018;
+ where mc_plan_type_cd in ("01", "04"); 
+ if mc_plan_name = "" then mc_plan_name = "MISSING";
+ rename MC_PLAN_REIMBRSMT_TYPE_CD=rmbrsmnt;
+proc sort;
+ by plan state_cd;
+
+
+***************************;
+***PLAN OMEGA DATA VARIABLE;
+***************************;
+
+data hq;
+ set dat.hq;
+proc sort;
+ by state_cd;
+
+
+**************************;
+***PLAN COMPOSITE SCORE***;
+**************************;
+
+data comp;
+ set dat.comp (rename = (plan_name = mc_plan_name));
+
+data comp;
+ set comp;
+ mc_plan_name = compress(mc_plan_name,'., "');
+
+
+proc sort;
+ by state_cd mc_plan_name;
+
+
+******************************************************************;
+***MERGE ONE: ED VISIT FILE WITH ASSIGNED BENES AND DEMO VARIABLES;
+******************************************************************;
+
+data all;
+ merge all bens (in=a) dsbl;
+ by bene_id;
+ if a;
+ if em = . then em = 0;
+ if vis = . then vis = 0;
+ if other = . then other = 0;
+proc sort;
+ by plan state_cd;
+
+
+**********************************************;
+***MERGE TWO: ADD IN STATE LEVEL REIMBURSEMENT;
+**********************************************;
+
+
+data all;
+ merge all (in=a) pln;
+ by plan state_cd;
+ if a;
+ run;
+
+proc sort;
+ by mc_plan_name;
+
+
+**************************************;
+***MERGE THREE: ADD IN FIXED PLAN NAME;
+**************************************;
+
+data all;
+ merge all (in=a) fix;
+ by mc_plan_name;
+ if a;
+ if mc_plan_name = ""  then delete;
+
+proc sql;
+ create table all as select distinct * from all
+ order by bene_id;
+
+ 
+
+*******************************;
+***WE EDIT THE PLAN NAMES A BIT;
+*******************************;
+ 
+data all;
+ set all;
+ mc_plan_name = compress(mc_plan_name,'., "');
+
+if mc_plan_name = "UNITEDHEALTHCAREOFNYINC" then mc_plan_name = "UNITEDHEALTHCARE OF NEW YORK";
+if mc_plan_name = "MERIDIANHEALTHPLAN" then mc_plan_name = "MERIDIAN HEALTH PLAN OF ILLINOIS MMP";
+if mc_plan_name = "MOLINAHEALTHCAREOFFLORIDAINC" then mc_plan_name = "MOLINA HEALTHCARE, INC";
+if mc_plan_name = "ANTHEM" then mc_plan_name = "ANTHEM - HIP";
+if mc_plan_name = "MDWISE" then mc_plan_name = "MDWISE - HIP";
+if mc_plan_name = "HEALTHPLANOFNEVADA" then mc_plan_name = "HEALTH PLAN OF NEVADA, INC";
+if mc_plan_name = "MANAGEDHEALTHSERVICES" then mc_plan_name = "MANAGED HEALTH SERVICES - HIP";
+if mc_plan_name = "ILLINICAREHEALTH" then mc_plan_name = "ILLINICARE HEALTH PLAN MMP";
+if mc_plan_name = "OPTIMAFAMILYCARE" then mc_plan_name = "OPTIMA HEALTH PLAN";
+if state_cd = "IL" and mc_plan_name = "MOLINAHEALTHCARE" then mc_plan_name = "MOLINA HEALTHCARE OF ILLINOIS, INC. MMP";
+if mc_plan_name = "CAPITALDISTRICTPHYSHLTHPL" then mc_plan_name = "CAPITAL DISTRICT PHYSICIANS HEALTH";
+if mc_plan_name = "FLORIDATRUEHEALTHINC" then mc_plan_name = "FLORIDA TRUE HEALTH INC LLC";
+if mc_plan_name = "SOUTHFLORIDACOMMUNITYCARENETWORK" then mc_plan_name = "SOUTH FLORIDA COMMUNITY CARE NETWORK LLC";
+if mc_plan_name = "UNITEDHEALTHCAREOFPAINC" then mc_plan_name = "UNITEDHEALTHCARE OF PA, INC (AMERICHOICE)";
+if mc_plan_name = "MOLINAHEALTHCAREOFFLORIDA" then mc_plan_name = "MOLINA HEALTHCARE, INC";
+if mc_plan_name = "HEALTHINSURANCEPLANOFGREATERNE" then mc_plan_name = "HEALTH INSURANCE PLAN OF GREATER NY";
+if mc_plan_name = "INDEPENDENTHEALTHASSOCIATIONINC" then mc_plan_name = "INDEPENDENT HLTH ASSOCIATION";
+
+mc_plan_name = compress(mc_plan_name,'., "');
+
+
+
+proc sort;
+ by state_cd mc_plan_name;
+
+
+*************************************;
+***MERGE FOUR: ADD IN COMPOSITE SCORE;
+*************************************;
+
+data all;
+ merge all (in=a) comp;
+ by state_cd mc_plan_name;
+ if a;
+ if mc_plan_name = "SUPERIORHEALTHPLAN" then plan_omega_data = .925004;
+
+
+*************************************;
+***MERGE FIVE: ADD IN PLAN OMEGA DATA;
+*************************************;
+
+
+
+data all;
+ merge all (in=a) hq;
+ by state_cd;
+ if a;
+ if plan_omega_data = . the ms = 1; else ms = 0;
+
+
+data dat.ed_vis_file;
+ set all;
+ if plan_omega_data = . or age = . or sex_cd = "" or DSBLTY_DEAF_IND = "" then delete;
+ if age < 19 or age > 64  then delete;
+
+ rename mc_plan_name = plan_name;
+ tot_vis = em + vis;
+
+ if rmbrsmnt in ("01") then plan_omega_util = "medium_um";
+ else if rmbrsmnt in ("02", "03") then plan_omega_util = "high_um";
+ else if rmbrsmnt in ("04", "05", "06", "07") then plan_omega_util = "low_um";
+
+
+if mc_plan_name = "AMERIGROUPCOMMUNITYCARE" and state_cd = "TX"  then do;
+ plan_omega_util = "high_um";
+ rmbrsmnt = "02";
+end;
+
+if mc_plan_name = "ANTHEM-HIP" and state_cd = "IN" then do;
+ plan_omega_util = "high_um";
+ rmbrsmnt = "02";
+end;
+
+if mc_plan_name = "BMCHEALTHNETPLAN" and state_cd = "MA"  then do;
+ plan_omega_util = "high_um";
+ rmbrsmnt = "03";
+end;
+
+if mc_plan_name = "HEALTHYBLUE" and state_cd = "MO" then do;
+ plan_omega_util = "medium_um";
+ rmbrsmnt = "01";
+end;
+
+if mc_plan_name = "KAISERPERMANENTE" and state_cd in ("MD", "HI")  then do;
+ plan_omega_util = "high_um";
+ rmbrsmnt = "03";
+end;
+
+if mc_plan_name = "MANAGEDHEALTHSERVICES-HIP" and state_cd = "IN" then do;
+ plan_omega_util = "high_um";
+ rmbrsmnt = "02";
+end;
+
+if mc_plan_name = "UNITEDHEALTHCARE" and state_cd = "NJ"  then do;
+ plan_omega_util = "medium_um";
+ rmbrsmnt = "01";
+end;
+
+if mc_plan_name = "UNITEDHEALTHCARECOMMUNITYPLAN" and state_cd in ("MI", "WI") then do;
+ plan_omega_util = "high_um";
+ rmbrsmnt = "02";
+end;
+
+*if state_cd in ("NY", "FL") then delete;
+
+run;
+
+
+
+
+  
+proc print data=dat.ed_vis_file (obs=20);
+ run;

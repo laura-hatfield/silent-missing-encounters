@@ -1,0 +1,34 @@
+libname dat '/DATA';
+libname taf '/taf';
+options mprint;
+
+libname library 'home/taf';
+
+
+proc format library=library;
+
+
+
+
+*************************************************************************************;
+*CREATION OF A DATABASE THAT CONTAINS ALL ED VISITS FROM THE TAF OTHER SERVICES FILE*;
+*************************************************************************************;
+
+
+data st;
+ set taf.taf_other_services_line_2018 (keep= clm_id line_prcdr_cd line_prcdr_cd_dt rev_cntr_cd bene_id msis_id line_SRVC_END_DT);
+ where line_prcdr_cd in ("99281", "99282", "99283", "99284", "99285", "99288") or
+ rev_cntr_cd in ("0450", "0451", "0452", "0453", "0454", "0455", "0456", "0457", "0458", "0459", "0981");
+ run;
+
+
+proc sql;
+ create table all as select  a.clm_id, line_prcdr_cd, line_prcdr_cd_dt, rev_cntr_cd, a.bene_id, a.msis_id, line_SRVC_END_DT,
+ dgns_cd_1, mc_plan_id, b.srvc_bgn_dt, b.srvc_end_dt from st as a left join taf.taf_other_services_header_2018  as b
+ on a.clm_id = b.clm_id;
+
+data dat.ed_vis;
+ set all;
+ run;
+
+
