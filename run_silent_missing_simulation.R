@@ -1,7 +1,10 @@
-## Load the simulation functions
+#### 0. Load libraries and functions ####
+library(tidyverse)
+library(doParallel)
+library(foreach)
 source("silent_missing_simulation_fns.R")
 
-# Set number of simualtion replications
+# Set number of simulation replications
 nsims = 1000
 
 #### Run simulation using parallel processing  ####
@@ -50,6 +53,6 @@ results <- foreach(i = 1:nsims,
                        mutate(runID = i)
                    } # end of dopar
 
-stopCluster(cl) #end the parallelization 
+parallel::stopCluster(cl) #end the parallelization 
 
-saveRDS(results, file = paste0(Sys.Date(),"_silent_missing_sim_results.rds"))
+saveRDS(results, file = "silent_missing_sim_results.rds")

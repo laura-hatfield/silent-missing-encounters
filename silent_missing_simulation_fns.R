@@ -1,18 +1,3 @@
-### DGP with parallel processing ###
-
-#### 0. Load libraries ####
-library(tidyverse)
-#library(dplyr)
-#library(tidyr)
-#library(boot)
-#library(tibble)
-#library(purrr)
-#library(splitstackshape)
-#library(data.table)
-library(doParallel)
-library(foreach)
-
-
 #### 1. Function to generate data  ####
 
 generate_data <- function(plan_n_mean, alpha, j,
@@ -46,11 +31,11 @@ generate_data <- function(plan_n_mean, alpha, j,
            center_omega=omega-mean(omega), 
            center_noisy_omega=noisy_omega-mean(noisy_omega),
            # Low-concern indicator depends on centered omega
-           low_concern=rbinom(j,1,inv.logit(low_concern_beta0+low_concern_beta1*center_omega)), 
+           low_concern=rbinom(j,1,plogis(low_concern_beta0+low_concern_beta1*center_omega)), 
            # Mean of illness distribution depends on centered omega
-           theta_mean = inv.logit(illness_param1 + illness_param2*center_omega),
+           theta_mean = plogis(illness_param1 + illness_param2*center_omega),
            # Mean of missingness proportion depends on centered omega
-           p_ed_mean = ifelse(low_concern==1,0,inv.logit(p_ed_param1a + p_ed_param1b*center_omega))) %>%
+           p_ed_mean = ifelse(low_concern==1,0,plogis(p_ed_param1a + p_ed_param1b*center_omega))) %>%
     select(-omega.err)
 
   total_n = sum(simdata_plans$nj)
@@ -67,12 +52,12 @@ generate_data <- function(plan_n_mean, alpha, j,
     # (higher quality plans have healthier enrollees;  note that theta is illness level, theta=0 perfect health)
     mutate(theta = rbeta(total_n, theta_mean*(1-illness_var)/illness_var, (1-theta_mean)*(1-illness_var)/illness_var), 
            # Injury emergency visits depend on health only
-           ed1_nz_prop = inv.logit(ed1_nz_beta0 + ed1_nz_beta1*(theta-theta_mean)), 
+           ed1_nz_prop = plogis(ed1_nz_beta0 + ed1_nz_beta1*(theta-theta_mean)), 
            ed1_lambda = exp(ed1_beta0 + ed1_beta1*(theta-theta_mean)),
            ed1_0 = rbinom(total_n,1,ed1_nz_prop),
            ed1 = ifelse( ed1_0 == 0, 0, rpois(total_n, lambda = ed1_lambda)),
            # Other (non-)emergency visits depend on health and plan quality
-           ed2_nz_prop = inv.logit(ed2_nz_beta0 + ed2_nz_beta1*(theta-theta_mean) + ed2_nz_beta2*center_omega),
+           ed2_nz_prop = plogis(ed2_nz_beta0 + ed2_nz_beta1*(theta-theta_mean) + ed2_nz_beta2*center_omega),
            ed2_lambda= exp(ed2_beta0 + ed2_beta1*(theta-theta_mean) + ed2_beta2*center_omega),
            ed2_0 = rbinom(total_n,1,ed2_nz_prop),
            ed2 = ifelse( ed2_0 == 0, 0, rpois(total_n, lambda = ed2_lambda)),
@@ -122,22 +107,16 @@ approach1 <- function(data) {
              # sum up to plan here and calculate 
              ###
              ed_hat_3=ifelse(low_concern == 1, taf_ed, ed_hat_2), # replace with TAF in low concern plans (no missingness)
-             ed_hat=ifelse(ed_hat_3 > taf_ed, ed_hat_3, taf_ed)) # replace with TAF if estimated is less than TAF (implement connection to TAF) 
+             appr1_ed_hat=ifelse(ed_hat_3 > taf_ed, ed_hat_3, taf_ed)) # replace with TAF if estimated is less than TAF (implement connection to TAF) 
     
     # Create tibble for the results data
-    return(data_with_predict %>% select(personID,planID,omega,noisy_omega,center_noisy_omega,low_concern,nj,p_ed_mean,
-                                        ed1,ed2,ed,health_adj1,health_adj2,
-                                        taf_ed1,taf_ed2,taf_ed,
-                                        ed2_qual,ed_hat_1,ed_hat_2,ed_hat_3,ed_hat))
+    return(data_with_predict %>% select(appr1_ed_hat))
     
   } else {
     print(paste0("there are only 0 or 1 low concern plans"))
     return(simdata_apr1 %>%
-             mutate(ed_hat=NA) %>%
-             select(personID,planID,omega,noisy_omega,center_noisy_omega,low_concern,nj,p_ed_mean,
-                    ed1,ed2,ed,health_adj1,health_adj2,
-                    taf_ed1,taf_ed2,taf_ed,
-                    ed2_qual,ed_hat_1,ed_hat_2,ed_hat_3,ed_hat))
+             mutate(appr1_ed_hat=NA) %>%
+             select(appr1_ed_hat))
   }
 }
 # end of function for Approach 1
@@ -170,14 +149,11 @@ approach2 <- function( data ) {
            a2_ed1_hat = taf_ed1 - a2_ed1_delta,
            ed_hat_1 = ifelse(a2_ed1_hat + a2_ed2_hat > 0,a2_ed1_hat + a2_ed2_hat,0), # calculate our estimated ED visits
            ed_hat_2 = ifelse(ed_hat_1<1,0,ed_hat_1), # quick and dirty 2-part model fix
-           ed_hat = ifelse(ed_hat_2 > taf_ed, ed_hat_2, taf_ed)) # replace with TAF if estimated is less than TAF (implement connection to TAF)
+           appr2_ed_hat = ifelse(ed_hat_2 > taf_ed, ed_hat_2, taf_ed)) # replace with TAF if estimated is less than TAF (implement connection to TAF)
   
   
   # Create tibble for the results data
-  tibble(data_with_predict %>% select(personID,planID,omega,noisy_omega,center_noisy_omega,low_concern,nj,p_ed_mean,
-                                      ed1,ed2,ed,health_adj1,health_adj2,
-                                      taf_ed1,taf_ed2,taf_ed,a2_ed1_delta,
-                                      a2_ed2_hat,a2_ed1_hat,ed_hat_1,ed_hat_2,ed_hat,taf_ed2toed1_multiplier))
+  tibble(data_with_predict %>% select(appr2_ed_hat))
 }
 # end of function for Approach 2
 
@@ -186,33 +162,21 @@ approach2 <- function( data ) {
 analyze_data <- function( data) {
   appr1 <- approach1( data )
   appr2 <- approach2( data )
-  long_dat <- bind_rows(appr1 = appr1, appr2 = appr2, .id="approach") %>%
+  plan_summaries <- bind_cols(data,appr1) %>% bind_cols(appr2) %>%
     # Create 2 individual-level metrics: 
     #   1. difference of estimated and true, 
     #   2. difference of estimated and taf
-    mutate(est_ed_diff = ed_hat - ed,
-           est_taf_diff = ed_hat - taf_ed) %>%
-    group_by(approach,planID) %>%
-    # create plan-level metrics (mean differences and total sum differences)
-    summarise(mean_est_ed_diff = mean( est_ed_diff ),
-              mean_est_taf_diff = mean( est_taf_diff ), 
-              sum_est_ed_diff = sum( est_ed_diff),
-              sum_est_taf_diff = sum( est_taf_diff),
-              omega = mean(omega),
-              nj=mean(nj), 
-              noisy_omega = mean(noisy_omega),
-              center_noisy_omega = mean(center_noisy_omega),
-              mean_proportion_missing = mean(p_ed_mean), 
-              sum_ed = sum(ed),
-              sum_taf_ed = sum(taf_ed),
-              sum_ed_hat = sum(ed_hat),
-              mean_ed = mean(ed),
-              mean_taf_ed = mean(taf_ed),
-              mean_ed_hat = mean(ed_hat),
-              low_concern = mean(low_concern),
-              mean_health_adj1 = mean(health_adj1),
-              mean_health_adj2 = mean(health_adj2),.groups="keep")
-  return(long_dat)
+    mutate(appr1_est_ed_diff = appr1_ed_hat - ed,
+           appr1_est_taf_diff = appr1_ed_hat - taf_ed,
+           appr2_est_ed_diff = appr2_ed_hat - ed,
+           appr2_est_taf_diff = appr2_ed_hat - taf_ed) %>%
+    group_by(planID,nj,omega,noisy_omega,center_noisy_omega,low_concern,p_ed_mean,theta_mean) %>%
+    # create plan-level summaries
+    summarise(across(c(appr1_est_ed_diff,appr1_est_taf_diff,appr1_ed_hat,
+                     appr2_est_ed_diff,appr2_est_taf_diff,appr2_ed_hat,
+                     taf_ed,ed,health_adj1,health_adj2),sum,.names="sum_{.col}"),.groups="keep")
+
+  return(plan_summaries)
 }
 # end of function to analyze data
 
